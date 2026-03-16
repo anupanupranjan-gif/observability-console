@@ -1,70 +1,128 @@
-# Getting Started with Create React App
+# observability-console
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+An AI-powered observability console for the SearchX platform. Combines live Prometheus metrics with a local Ollama AI assistant, letting you query the health of your search infrastructure in plain English.
 
-## Available Scripts
+Accessible from Grafana dashboards as a companion ops tool. Built as a standalone React app deployed on Kubernetes.
 
-In the project directory, you can run:
+---
 
-### `npm start`
+## What It Does
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+The console pulls real-time metrics from [prometheus-mcp](https://github.com/anupanupranjan-gif/prometheus-mcp) every 30 seconds and injects them as context into a local LLM (Ollama/gemma3:1b). You can ask natural language questions about the system and get answers grounded in live data.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+```
+Grafana Dashboard
+      │
+      └──► observability-console (http://localhost/ops)
+                 │                        │
+                 ▼                        ▼
+          Live metric cards         AI Chat (Ollama)
+          (auto-refresh 30s)        (Prometheus context injected)
+                 │
+                 ▼
+          prometheus-mcp  ──►  Prometheus  ──►  search-api
+```
 
-### `npm test`
+---
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+## Screenshots
 
-### `npm run build`
+### System Healthy
+![Observability Console - Healthy State](docs/healthy.png)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+---
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+## Example Conversations
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+> **You**: Is the system healthy?
+>
+> **AI**: Yes, the system is healthy. All 2/2 pods are running, error rate is 0%, and average search latency is 74ms which is well within acceptable range.
 
-### `npm run eject`
+> **You**: What's the current traffic?
+>
+> **AI**: Search API is currently handling 10.4 requests per minute. The throughput trend over the last 30 minutes shows a peak earlier and steady traffic now.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+> **You**: Are there any performance concerns?
+>
+> **AI**: No current concerns. Latency and error rate are both healthy. Max observed latency is 640ms which is within normal range for a hybrid BM25 + vector search.
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+---
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+## Stack
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+- **Frontend**: React 18
+- **Metrics**: prometheus-mcp (REST API over Prometheus)
+- **AI**: Ollama (gemma3:1b, local)
+- **Fonts**: IBM Plex Mono, IBM Plex Sans
+- **Deployment**: Kubernetes (Kind), nginx, Docker
 
-## Learn More
+---
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## Local Development
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+```bash
+npm install
 
-### Code Splitting
+# Start prometheus-mcp locally first
+cd ../prometheus-mcp
+PROMETHEUS_URL=http://localhost:9090 node server.js &
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+# Start the console
+cd ../observability-console
+REACT_APP_MCP_BASE=http://localhost:3001 \
+REACT_APP_OLLAMA_BASE=http://localhost:11434 \
+npm start
+```
 
-### Analyzing the Bundle Size
+Open `http://localhost:3000`.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+---
 
-### Making a Progressive Web App
+## Kubernetes Deployment
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+The app runs as a pod in the `default` namespace, served by nginx, and is accessible via the nginx ingress at `/ops`.
 
-### Advanced Configuration
+Prometheus MCP is proxied through the same ingress at `/mcp` so the browser can reach it without CORS issues.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+```
+http://localhost/ops   →  observability-console pod
+http://localhost/mcp   →  prometheus-mcp pod
+```
 
-### Deployment
+Manifests are managed in the [search-infra](https://github.com/anupanupranjan-gif/search-infra) repo:
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+```bash
+kubectl apply -f k8s-configs/observability-console/deployment.yaml
+kubectl apply -f k8s-configs/observability-console/ingress.yaml
+```
 
-### `npm run build` fails to minify
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `REACT_APP_MCP_BASE` | `http://localhost:3001` | prometheus-mcp base URL |
+| `REACT_APP_OLLAMA_BASE` | `http://localhost:11434` | Ollama base URL |
+
+In production (Kind), `REACT_APP_MCP_BASE` is set to `/mcp` so requests route through the nginx ingress.
+
+---
+
+## Architecture Notes
+
+The AI context is rebuilt on every message using the latest metrics snapshot. This means the assistant always answers based on current data, not stale context. The pattern is similar to how enterprise tools like the Dynatrace MCP integration work — the AI is given structured observability data as grounded context rather than relying on training knowledge.
+
+Ollama runs locally on the host machine (not in Kind) so the browser calls it directly at `http://localhost:11434`.
+
+---
+
+## Part of SearchX
+
+This repo is one component of the SearchX platform:
+
+- [search-api](https://github.com/anupanupranjan-gif/search-api) — Spring Boot hybrid search service (BM25 + vector)
+- [search-ui](https://github.com/anupanupranjan-gif/search-ui) — React eCommerce search frontend
+- [search-catalog-indexer](https://github.com/anupanupranjan-gif/search-catalog-indexer) — Product indexing pipeline
+- [prometheus-mcp](https://github.com/anupanupranjan-gif/prometheus-mcp) — Prometheus MCP server (metrics source for this app)
+- [search-infra](https://github.com/anupanupranjan-gif/search-infra) — Kubernetes manifests, Helm charts, ArgoCD, Terraform
